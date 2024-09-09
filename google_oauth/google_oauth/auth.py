@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Request, HTTPException, status, Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from google_oauth.schema import UserSchema
+from google_oauth.schema import UserSchema, RefreshTokenRequest
 from google_oauth.database import get_db, Session
 from google_oauth.models import User
 from google_oauth.config import get_settings
@@ -40,18 +40,50 @@ oauth.register(
 )
 
 ################# JWT Workflow ###########################
-async def create_token(payload: dict, time_delta_in_seconds: int):
+async def create_token(user_id, email, time_delta_in_seconds: int):
     payload = {
         'exp': datetime.utcnow() + timedelta(seconds=time_delta_in_seconds),
         'iat': datetime.utcnow(),
-        'sub': payload['email'],
-        'id': payload['sub']
+        'sub': email,
+        'id': user_id
     }
     
     return jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
 
 async def decode_jwt_token(token: str):
     return jwt.decode(token, JWT_SECRET_KEY, algorithms=JWT_ALGORITHM)
+
+
+async def verify_jwt_token(token: str, db: Session):
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Bearer token is missing"
+        )
+    
+    try:
+        payload = await decode_jwt_token(token)
+        username: str = payload.get("sub")
+        if username is None:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+        expiry = payload.get("exp")
+        if expiry is None or datetime.utcfromtimestamp(expiry) < datetime.utcnow():
+            raise HTTPException(status_code=401, detail="Token has expired")
+
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token has expired")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+
+    print(f"JWT decoded for username: {username}")
+    user = await get_user_by_email(username, db)
+
+    if user is None:
+        raise HTTPException(status_code=404, detail=f"JWT User {username} not found")
+
+    print(f"User: {username} authenticated")
+    return user
 
 
 ################# User Workflow #################
@@ -98,8 +130,8 @@ async def google_auth_callback(request: Request, db: Session = Depends(get_db)):
             user = await create_user_from_google_info(user_info, db)
         
         # generate the access and refresh tokens
-        access_token = await create_token(user_info, JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60)
-        refresh_token = await create_token(user_info, JWT_REFRESH_TOKEN_EXPIRE_MINUTES * 60)
+        access_token = await create_token(user_info['sub'], user_info['email'], JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60)
+        refresh_token = await create_token(user_info['sub'], user_info['email'], JWT_REFRESH_TOKEN_EXPIRE_MINUTES * 60)
 
         return {
             "access_token": access_token,
@@ -123,71 +155,25 @@ async def get_current_user(
 ):
     token = credentials.credentials
 
-    if not token:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Bearer token is missing"
-        )
-    
-    try:
-        payload = await decode_jwt_token(token)
-        username: str = payload.get("sub")
-        if username is None:
-            raise HTTPException(status_code=401, detail="Invalid token")
+    return await verify_jwt_token(token, db)
 
-        expiry = payload.get("exp")
-        if expiry is None or datetime.utcfromtimestamp(expiry) < datetime.utcnow():
-            raise HTTPException(status_code=401, detail="Token has expired")
 
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Token has expired")
-    except jwt.InvalidTokenError:
-        raise HTTPException(status_code=401, detail="Invalid token")
-
-    print(f"JWT decoded for username: {username}")
-    user = await get_user_by_email(username, db)
-
-    if user is None:
-        raise HTTPException(status_code=404, detail=f"JWT User {username} not found")
-
-    print(f"User: {username} authenticated")
-    return user
-    
-
-@auth_router.get("/refresh")
+@auth_router.post("/refresh")
 async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(HTTPBearer()),
+    refresh_token_request: RefreshTokenRequest,
     db: Session = Depends(get_db)
 ):
-    token = credentials.credentials
+    token = refresh_token_request.refresh_token
 
-    if not token:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Bearer token is missing"
-        )
-    
-    try:
-        payload = await decode_jwt_token(token)
-        username: str = payload.get("sub")
-        if username is None:
-            raise HTTPException(status_code=401, detail="Invalid token")
+    user = await verify_jwt_token(token, db)
 
-        expiry = payload.get("exp")
-        if expiry is None or datetime.utcfromtimestamp(expiry) < datetime.utcnow():
-            raise HTTPException(status_code=401, detail="Token has expired")
+    # user is verified, regenerate the access and refresh tokens
+    access_token = await create_token(user.id, user.email, JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60)
+    refresh_token = await create_token(user.id, user.email, JWT_REFRESH_TOKEN_EXPIRE_MINUTES * 60)
 
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Token has expired")
-    except jwt.InvalidTokenError:
-        raise HTTPException(status_code=401, detail="Invalid token")
-
-    print(f"JWT decoded for username: {username}")
-    user = await get_user_by_email(username, db)
-
-    if user is None:
-        raise HTTPException(status_code=404, detail=f"JWT User {username} not found")
-
-    print(f"User: {username} authenticated")
-    return user
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "user_info": user
+    }
 
