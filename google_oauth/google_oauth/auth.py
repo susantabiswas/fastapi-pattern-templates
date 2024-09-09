@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Request, HTTPException, status, Depends
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from google_oauth.schema import UserSchema, RefreshTokenRequest
+from google_oauth.schema import UserSchema, AuthenticatedUserToken, RefreshTokenRequest
 from google_oauth.database import get_db, Session
 from google_oauth.models import User
 from google_oauth.config import get_settings
@@ -133,11 +133,16 @@ async def google_auth_callback(request: Request, db: Session = Depends(get_db)):
         access_token = await create_token(user_info['sub'], user_info['email'], JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60)
         refresh_token = await create_token(user_info['sub'], user_info['email'], JWT_REFRESH_TOKEN_EXPIRE_MINUTES * 60)
 
-        return {
-            "access_token": access_token,
-            "refresh_token": refresh_token,
-            "user_info": user_info
-        }
+        return AuthenticatedUserToken(
+            access_token=access_token,
+            refresh_token=refresh_token,
+            user_info=UserSchema(
+                id=user.id,
+                email=user.email,
+                fullname=user.fullname,
+                google_sub=user.google_sub
+        )
+    )
 
     except Exception as e:
         print(f"Google Oauth Exception: {e}")
@@ -171,9 +176,14 @@ async def get_current_user(
     access_token = await create_token(user.id, user.email, JWT_ACCESS_TOKEN_EXPIRE_MINUTES * 60)
     refresh_token = await create_token(user.id, user.email, JWT_REFRESH_TOKEN_EXPIRE_MINUTES * 60)
 
-    return {
-        "access_token": access_token,
-        "refresh_token": refresh_token,
-        "user_info": user
-    }
+    return AuthenticatedUserToken(
+        access_token=access_token,
+        refresh_token=refresh_token,
+        user_info=UserSchema(
+            id=user.id,
+            email=user.email,
+            fullname=user.fullname,
+            google_sub=user.google_sub
+        )
+    )
 
