@@ -3,7 +3,6 @@ import uvicorn
 from google_oauth.config import get_settings
 from google_oauth.auth import auth_router
 from starlette.middleware.sessions import SessionMiddleware
-
 from fastapi.middleware.cors import CORSMiddleware
 from google_oauth.database import Base, engine
 

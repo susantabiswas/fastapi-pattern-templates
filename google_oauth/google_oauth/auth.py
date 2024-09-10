@@ -9,7 +9,7 @@ from google_oauth.config import Settings
 from starlette.middleware.sessions import SessionMiddleware
 from authlib.integrations.base_client import OAuthError
 from authlib.oauth2.rfc6749 import OAuth2Token
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import jwt
 
 auth_router: APIRouter = APIRouter(prefix="/auth", tags=["auth"])
@@ -42,8 +42,8 @@ oauth.register(
 ################# JWT Workflow ###########################
 async def create_token(user_id, email, time_delta_in_seconds: int):
     payload = {
-        'exp': datetime.utcnow() + timedelta(seconds=time_delta_in_seconds),
-        'iat': datetime.utcnow(),
+        'exp': datetime.now(timezone.utc) + timedelta(seconds=time_delta_in_seconds),
+        'iat': datetime.now(timezone.utc),
         'sub': email,
         'id': user_id
     }
@@ -68,7 +68,7 @@ async def verify_jwt_token(token: str, db: Session):
             raise HTTPException(status_code=401, detail="Invalid token")
 
         expiry = payload.get("exp")
-        if expiry is None or datetime.utcfromtimestamp(expiry) < datetime.utcnow():
+        if expiry is None or datetime.fromtimestamp(expiry, tz=timezone.utc) < datetime.now(timezone.utc):
             raise HTTPException(status_code=401, detail="Token has expired")
 
     except jwt.ExpiredSignatureError:
