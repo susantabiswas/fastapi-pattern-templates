@@ -1,4 +1,7 @@
 # FastAPI Google OAuth2 Project Overview
+In this project, two authentication related concepts have been covered:
+- **Google OAuth2 Flow**: To authenticate user.
+- **JWT refresh token**: For regenerating new access and refresh tokens.
 
 ## Setup Instructions
 - Create a virtual environment
